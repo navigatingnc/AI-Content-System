@@ -1,5 +1,5 @@
-from src.models.user import db
-from src.models.ai_provider import AIProvider, ProviderAccount
+from user import db
+from ai_provider import AIProvider, ProviderAccount
 from datetime import datetime
 import uuid
 import json
@@ -14,6 +14,7 @@ class Task(db.Model):
     task_type = db.Column(db.String(50), nullable=False)
     priority = db.Column(db.Integer, nullable=False, default=1)  # 1-5, 5 being highest
     status = db.Column(db.String(20), nullable=False, default='pending')  # pending, processing, completed, failed
+    error_message = db.Column(db.Text, nullable=True) # For storing errors if task fails before assignment or after retries
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
     started_at = db.Column(db.DateTime, nullable=True)
@@ -33,6 +34,7 @@ class Task(db.Model):
             'task_type': self.task_type,
             'priority': self.priority,
             'status': self.status,
+            'error_message': self.error_message,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'started_at': self.started_at.isoformat() if self.started_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None
@@ -84,3 +86,18 @@ class Content(db.Model):
     
     def set_metadata(self, metadata_dict):
         self.metadata = json.dumps(metadata_dict)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'task_id': self.task_id,
+            'title': self.title,
+            'content_type': self.content_type,
+            'content_data': self.content_data, # Important for code preview
+            'file_path': self.file_path,
+            'metadata': self.get_metadata(), # Use the getter to parse JSON
+            'version': self.version,
+            'status': self.status,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+        }

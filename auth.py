@@ -1,6 +1,6 @@
-from src.models.user import db, User
-from src.models.ai_provider import AIProvider, ProviderAccount
-from src.models.task import Task, TaskAssignment, Content
+from user import db, User
+from ai_provider import AIProvider, ProviderAccount
+from task import Task, TaskAssignment, Content
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import JWTManager, create_access_token, create_refresh_token
 import datetime

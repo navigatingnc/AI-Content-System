@@ -1,10 +1,12 @@
 from flask import Blueprint, request, jsonify
-from src.models.ai_provider import AIProvider, ProviderAccount
-from src.models.ai_provider_integration import AIProviderFactory
+from ai_provider import AIProvider, ProviderAccount
+from ai_provider_integration import AIProviderFactory
 from flask_jwt_extended import jwt_required, get_jwt_identity
-from src.models.user import db, User
+from user import db, User
 import json
 from datetime import datetime, timedelta
+import base64 # Added for encoding encrypted credentials
+from utils.security import encrypt_data # Added for credential encryption
 
 provider_bp = Blueprint('provider', __name__)
 
@@ -134,7 +136,8 @@ def test_provider(provider_id):
         return jsonify({'error': 'Provider not implemented'}), 400
     
     # Test authentication
-    success, error = provider_instance.authenticate(account.auth_credentials)
+    # Pass the provider model instance for API URL configuration
+    success, error = provider_instance.authenticate(account.auth_credentials, provider_model_instance=provider)
     
     if not success:
         return jsonify({
@@ -169,12 +172,22 @@ def add_account(provider_id):
     for field in required_fields:
         if field not in data:
             return jsonify({'error': f'Missing required field: {field}'}), 400
+
+    raw_credentials = data['auth_credentials']
+    try:
+        encrypted_credentials_bytes = encrypt_data(raw_credentials)
+        # Fernet output is already URL-safe base64 encoded bytes.
+        # For storing in text column, decode to utf-8.
+        encrypted_credentials_str = encrypted_credentials_bytes.decode('utf-8')
+    except Exception as e:
+        # In a real app, log this error: logging.error(f"Credential encryption failed: {e}")
+        return jsonify({'error': 'Failed to secure credentials due to encryption error.'}), 500
     
     # Create new account
     account = ProviderAccount(
         provider_id=provider_id,
         account_name=data['account_name'],
-        auth_credentials=data['auth_credentials'],
+        auth_credentials=encrypted_credentials_str, # Store encrypted string
         token_limit=data['token_limit'],
         token_used=0,
         reset_date=data.get('reset_date'),
