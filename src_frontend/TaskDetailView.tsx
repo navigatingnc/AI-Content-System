@@ -4,14 +4,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter }
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
-import { taskAPI } from '../../lib/api';
-import { useAuth } from '../../hooks/useAuth';
+import { taskAPI } from '../../lib/api'; // Assuming api.ts is in ../../lib
+import { useAuth } from '../../hooks/useAuth'; // Assuming useAuth is in ../../hooks
 
 interface Content {
   id: string;
   title: string;
   content_type: string;
   file_path: string;
+  content_data?: string; // For direct preview of text/code
   status: string;
   created_at: string;
 }
@@ -19,7 +20,7 @@ interface Content {
 interface Assignment {
   id: string;
   provider_id: string;
-  provider_name: string;
+  provider_name: string; // Added this based on backend update
   status: string;
   tokens_used: number;
   created_at: string;
@@ -63,7 +64,7 @@ export default function TaskDetailView() {
   const fetchTaskDetail = async (id: string) => {
     setLoading(true);
     try {
-      const response = await taskAPI.getTask(id);
+      const response = await taskAPI.getTask(id); // This should fetch TaskDetail structure
       setTaskDetail(response.data);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to fetch task details');
@@ -78,10 +79,8 @@ export default function TaskDetailView() {
 
   const handleCancelTask = async () => {
     if (!taskId) return;
-    
     try {
       await taskAPI.cancelTask(taskId);
-      // Refresh task details after cancellation
       fetchTaskDetail(taskId);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to cancel task');
@@ -89,7 +88,8 @@ export default function TaskDetailView() {
   };
 
   const getStatusBadge = (status: string) => {
-    switch (status) {
+    // ... (same as before)
+      switch (status) {
       case 'pending':
         return <Badge variant="outline" className="bg-yellow-100 text-yellow-800">Pending</Badge>;
       case 'processing':
@@ -107,42 +107,100 @@ export default function TaskDetailView() {
 
   const formatDate = (dateString: string | null) => {
     if (!dateString) return 'N/A';
-    const date = new Date(dateString);
-    return date.toLocaleString();
+    return new Date(dateString).toLocaleString();
   };
 
-  const renderContentPreview = (content: Content) => {
-    switch (content.content_type) {
+  // Moved renderContentPreview out to be a component or memoized function if it causes re-renders
+  // For now, keeping it as a function within TaskDetailView, but it will re-declare on each render.
+  // To use hooks like useState/useEffect, it must be a component or a custom hook.
+  // So, we create a sub-component for rendering each content item's preview.
+
+  const ContentItemPreview = ({ item }: { item: Content }) => {
+    const [fetchedCode, setFetchedCode] = useState<string | null>(null);
+    const [isFetchingCode, setIsFetchingCode] = useState(false);
+    const [fetchError, setFetchError] = useState<string | null>(null);
+
+    useEffect(() => {
+      setFetchedCode(null);
+      setIsFetchingCode(false);
+      setFetchError(null);
+
+      if (item.content_type === 'code' && item.content_data) {
+        setFetchedCode(item.content_data);
+      } else if (item.content_type === 'code' && item.file_path) {
+        setIsFetchingCode(true);
+        fetch(`/api/content/file?path=${encodeURIComponent(item.file_path)}`)
+          .then(async response => {
+            if (!response.ok) {
+              const errorText = await response.text();
+              try {
+                const errorJson = JSON.parse(errorText);
+                throw new Error(errorJson.error || errorJson.detail || `Failed to fetch code: ${response.statusText}`);
+              } catch (e) {
+                throw new Error(errorText && errorText.length < 200 ? errorText : `Failed to fetch code: ${response.statusText}`);
+              }
+            }
+            return response.text();
+          })
+          .then(textData => {
+            setFetchedCode(textData);
+          })
+          .catch(err => {
+            console.error("Error fetching code content for item:", item.id, err);
+            setFetchError(err.message || 'Unknown error fetching code.');
+          })
+          .finally(() => {
+            setIsFetchingCode(false);
+          });
+      }
+    }, [item.id, item.content_type, item.content_data, item.file_path]);
+
+    switch (item.content_type) {
       case 'image':
         return (
           <div className="mt-4">
-            <img 
-              src={`/api/content/file?path=${encodeURIComponent(content.file_path)}`} 
-              alt={content.title}
-              className="max-w-full h-auto rounded-md shadow-md"
-            />
+            {item.file_path && (
+              <img
+                src={`/api/content/file?path=${encodeURIComponent(item.file_path)}`}
+                alt={item.title}
+                className="max-w-full h-auto rounded-md shadow-md"
+              />
+            )}
           </div>
         );
       case 'code':
+        let codeToDisplay: string;
+        if (item.content_data && !isFetchingCode && !fetchError && fetchedCode === null) {
+          // Primarily use content_data if available and no fetch operation has superseded it.
+          codeToDisplay = item.content_data;
+        } else if (isFetchingCode) {
+          codeToDisplay = "Fetching code from file...";
+        } else if (fetchError) {
+          codeToDisplay = `Error: ${fetchError}`;
+        } else if (fetchedCode !== null) {
+          codeToDisplay = fetchedCode;
+        } else if (!item.content_data && !item.file_path) {
+          codeToDisplay = "No code content or file path available.";
+        } else {
+          codeToDisplay = "Loading code content...";
+        }
+
         return (
           <div className="mt-4">
             <div className="bg-gray-900 text-gray-100 p-4 rounded-md overflow-auto max-h-96">
-              <pre>
-                <code>
-                  {/* Code content would be loaded here */}
-                  Loading code content...
-                </code>
-              </pre>
+              <pre><code>{codeToDisplay}</code></pre>
             </div>
-            <Button variant="outline" className="mt-2">
-              <a 
-                href={`/api/content/file?path=${encodeURIComponent(content.file_path)}`} 
-                download
-                className="no-underline"
-              >
-                Download Code File
-              </a>
-            </Button>
+            {item.file_path && (
+              <Button variant="outline" className="mt-2">
+                <a
+                  href={`/api/content/file?path=${encodeURIComponent(item.file_path)}`}
+                  download
+                  className="no-underline"
+                >
+                  Download Code File
+                </a>
+              </Button>
+            )}
           </div>
         );
       case 'code_project':
@@ -151,15 +209,17 @@ export default function TaskDetailView() {
             <div className="bg-gray-100 p-4 rounded-md">
               <p>Project files are packaged as a ZIP archive.</p>
             </div>
-            <Button variant="outline" className="mt-2">
-              <a 
-                href={`/api/content/file?path=${encodeURIComponent(content.file_path)}`} 
-                download
-                className="no-underline"
-              >
-                Download Project ZIP
-              </a>
-            </Button>
+            {item.file_path && (
+              <Button variant="outline" className="mt-2">
+                <a
+                  href={`/api/content/file?path=${encodeURIComponent(item.file_path)}`}
+                  download
+                  className="no-underline"
+                >
+                  Download Project ZIP
+                </a>
+              </Button>
+            )}
           </div>
         );
       default:
@@ -168,34 +228,31 @@ export default function TaskDetailView() {
             <div className="bg-gray-100 p-4 rounded-md">
               <p>Content preview not available for this type.</p>
             </div>
-            <Button variant="outline" className="mt-2">
-              <a 
-                href={`/api/content/file?path=${encodeURIComponent(content.file_path)}`} 
-                download
-                className="no-underline"
-              >
-                Download Content
-              </a>
-            </Button>
+            {item.file_path && (
+              <Button variant="outline" className="mt-2">
+                <a
+                  href={`/api/content/file?path=${encodeURIComponent(item.file_path)}`}
+                  download
+                  className="no-underline"
+                >
+                  Download Content
+                </a>
+              </Button>
+            )}
           </div>
         );
     }
   };
 
+
   if (loading) {
-    return (
-      <div className="container mx-auto py-6">
-        <div className="text-center">Loading task details...</div>
-      </div>
-    );
+    return <div className="container mx-auto py-6 text-center">Loading task details...</div>;
   }
 
   if (error) {
     return (
       <div className="container mx-auto py-6">
-        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-          {error}
-        </div>
+        <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">{error}</div>
         <Button onClick={handleBackToDashboard}>Back to Dashboard</Button>
       </div>
     );
@@ -203,8 +260,8 @@ export default function TaskDetailView() {
 
   if (!taskDetail) {
     return (
-      <div className="container mx-auto py-6">
-        <div className="text-center">Task not found</div>
+      <div className="container mx-auto py-6 text-center">
+        Task not found
         <Button onClick={handleBackToDashboard} className="mt-4">Back to Dashboard</Button>
       </div>
     );
@@ -230,6 +287,7 @@ export default function TaskDetailView() {
           </div>
         </CardHeader>
         <CardContent>
+          {/* ... (task details grid - same as before) ... */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <p className="text-sm font-medium">Created:</p>
@@ -251,9 +309,7 @@ export default function TaskDetailView() {
         </CardContent>
         <CardFooter>
           {(task.status === 'pending' || task.status === 'processing') && (
-            <Button variant="destructive" onClick={handleCancelTask}>
-              Cancel Task
-            </Button>
+            <Button variant="destructive" onClick={handleCancelTask}>Cancel Task</Button>
           )}
         </CardFooter>
       </Card>
@@ -266,24 +322,16 @@ export default function TaskDetailView() {
         
         <TabsContent value="content">
           {content.length === 0 ? (
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-center py-4">
-                  No content generated yet.
-                </div>
-              </CardContent>
-            </Card>
+            <Card><CardContent className="pt-6 text-center py-4">No content generated yet.</CardContent></Card>
           ) : (
             content.map((item) => (
               <Card key={item.id} className="mb-4">
                 <CardHeader>
                   <CardTitle>{item.title}</CardTitle>
-                  <CardDescription>
-                    Type: {item.content_type} | Status: {item.status}
-                  </CardDescription>
+                  <CardDescription>Type: {item.content_type} | Status: {item.status}</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  {renderContentPreview(item)}
+                  <ContentItemPreview item={item} />
                 </CardContent>
               </Card>
             ))
@@ -292,23 +340,16 @@ export default function TaskDetailView() {
         
         <TabsContent value="assignments">
           {assignments.length === 0 ? (
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-center py-4">
-                  No assignments yet.
-                </div>
-              </CardContent>
-            </Card>
+            <Card><CardContent className="pt-6 text-center py-4">No assignments yet.</CardContent></Card>
           ) : (
             assignments.map((assignment) => (
               <Card key={assignment.id} className="mb-4">
                 <CardHeader>
                   <CardTitle>Assignment to {assignment.provider_name}</CardTitle>
-                  <CardDescription>
-                    Status: {assignment.status}
-                  </CardDescription>
+                  <CardDescription>Status: {assignment.status}</CardDescription>
                 </CardHeader>
                 <CardContent>
+                  {/* ... (assignment details grid - same as before) ... */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
                       <p className="text-sm font-medium">Created:</p>

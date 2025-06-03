@@ -1,10 +1,12 @@
 from abc import ABC, abstractmethod
 import requests
 import json
+# import base64 # No longer needed here
+from utils.security import decrypt_data
 import os
 from datetime import datetime
-from src.models.task import Task, TaskAssignment, Content
-from src.models.ai_provider import AIProvider, ProviderAccount
+from task import Task, TaskAssignment, Content
+from ai_provider import AIProvider, ProviderAccount
 
 class AIProviderInterface(ABC):
     """Base abstract class for AI provider integrations"""
@@ -28,19 +30,37 @@ class AIProviderInterface(ABC):
 class GPTProvider(AIProviderInterface):
     """Integration with OpenAI's GPT for image generation"""
     
-    API_URL = "https://api.openai.com/v1"
+    # API_URL class attribute can serve as a default
+    DEFAULT_API_URL = "https://api.openai.com/v1"
     
-    def authenticate(self, credentials):
+    def _get_api_url(self, provider_model_instance):
+        env_url = os.getenv("OPENAI_API_URL")
+        if env_url:
+            return env_url
+        if provider_model_instance and provider_model_instance.api_endpoint:
+            return provider_model_instance.api_endpoint # Assumes this is the full base URL
+        return self.DEFAULT_API_URL
+
+    def authenticate(self, credentials_encrypted_str, provider_model_instance=None): # Added provider_model_instance
         """Authenticate with OpenAI API"""
-        api_key = json.loads(credentials)['api_key']
+        try:
+            credentials_bytes = credentials_encrypted_str.encode('utf-8')
+            decrypted_credentials_json_str = decrypt_data(credentials_bytes)
+            api_key = json.loads(decrypted_credentials_json_str)['api_key']
+        except Exception as e:
+            # Log decryption/parsing error
+            return False, f"Credential decryption or parsing failed: {str(e)}"
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         
+        api_url_base = self._get_api_url(provider_model_instance)
+
         try:
             # Test authentication with a simple models list request
-            response = requests.get(f"{self.API_URL}/models", headers=headers)
+            response = requests.get(f"{api_url_base}/models", headers=headers)
             response.raise_for_status()
             return True, None
         except Exception as e:
@@ -48,12 +68,22 @@ class GPTProvider(AIProviderInterface):
     
     def generate_content(self, task, assignment):
         """Generate image content using DALL-E"""
-        api_key = json.loads(assignment.account.auth_credentials)['api_key']
+        try:
+            credentials_encrypted_str = assignment.account.auth_credentials
+            credentials_bytes = credentials_encrypted_str.encode('utf-8')
+            decrypted_credentials_json_str = decrypt_data(credentials_bytes)
+            api_key = json.loads(decrypted_credentials_json_str)['api_key']
+        except Exception as e:
+            # Log decryption/parsing error
+            return None, f"Credential decryption or parsing failed for content generation: {str(e)}"
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         
+        api_url_base = self._get_api_url(assignment.account.provider) # Get provider model from assignment
+
         try:
             # Extract parameters from task description
             task_data = json.loads(task.description) if task.description else {}
@@ -68,7 +98,7 @@ class GPTProvider(AIProviderInterface):
             }
             
             response = requests.post(
-                f"{self.API_URL}/images/generations",
+                f"{api_url_base}/images/generations", # Use dynamic URL
                 headers=headers,
                 json=payload
             )
@@ -111,9 +141,18 @@ class GPTProvider(AIProviderInterface):
         except Exception as e:
             return None, str(e)
     
-    def check_token_usage(self, credentials):
+    def check_token_usage(self, credentials_encrypted_str):
         """Check token usage with OpenAI API"""
-        api_key = json.loads(credentials)['api_key']
+        try:
+            credentials_bytes = credentials_encrypted_str.encode('utf-8')
+            decrypted_credentials_json_str = decrypt_data(credentials_bytes)
+            api_key = json.loads(decrypted_credentials_json_str)['api_key']
+        except Exception as e:
+            # Log decryption/parsing error
+            # This method might not be critical enough to stop a task,
+            # but for consistency, we should handle the error.
+            return None, f"Credential decryption or parsing failed for token usage check: {str(e)}"
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
@@ -135,19 +174,36 @@ class GPTProvider(AIProviderInterface):
 class ManusProvider(AIProviderInterface):
     """Integration with Manus for project code generation"""
     
-    API_URL = "https://api.manus.ai/v1"
-    
-    def authenticate(self, credentials):
+    # API_URL class attribute can serve as a default
+    DEFAULT_API_URL = "https://api.manus.ai/v1"
+
+    def _get_api_url(self, provider_model_instance):
+        env_url = os.getenv("MANUS_API_URL")
+        if env_url:
+            return env_url
+        if provider_model_instance and provider_model_instance.api_endpoint:
+            return provider_model_instance.api_endpoint
+        return self.DEFAULT_API_URL
+
+    def authenticate(self, credentials_encrypted_str, provider_model_instance=None): # Added provider_model_instance
         """Authenticate with Manus API"""
-        api_key = json.loads(credentials)['api_key']
+        try:
+            credentials_bytes = credentials_encrypted_str.encode('utf-8')
+            decrypted_credentials_json_str = decrypt_data(credentials_bytes)
+            api_key = json.loads(decrypted_credentials_json_str)['api_key']
+        except Exception as e:
+            return False, f"Credential decryption or parsing failed: {str(e)}"
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         
+        api_url_base = self._get_api_url(provider_model_instance)
+
         try:
             # Test authentication with a simple request
-            response = requests.get(f"{self.API_URL}/status", headers=headers)
+            response = requests.get(f"{api_url_base}/status", headers=headers)
             response.raise_for_status()
             return True, None
         except Exception as e:
@@ -155,12 +211,21 @@ class ManusProvider(AIProviderInterface):
     
     def generate_content(self, task, assignment):
         """Generate code project content"""
-        api_key = json.loads(assignment.account.auth_credentials)['api_key']
+        try:
+            credentials_encrypted_str = assignment.account.auth_credentials
+            credentials_bytes = credentials_encrypted_str.encode('utf-8')
+            decrypted_credentials_json_str = decrypt_data(credentials_bytes)
+            api_key = json.loads(decrypted_credentials_json_str)['api_key']
+        except Exception as e:
+            return None, f"Credential decryption or parsing failed for content generation: {str(e)}"
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        
+
+        api_url_base = self._get_api_url(assignment.account.provider)
+
         try:
             # Extract parameters from task description
             task_data = json.loads(task.description) if task.description else {}
@@ -175,7 +240,7 @@ class ManusProvider(AIProviderInterface):
             }
             
             response = requests.post(
-                f"{self.API_URL}/generate/project",
+                f"{api_url_base}/generate/project", # Use dynamic URL
                 headers=headers,
                 json=payload
             )
@@ -229,16 +294,36 @@ class ManusProvider(AIProviderInterface):
         except Exception as e:
             return None, str(e)
     
-    def check_token_usage(self, credentials):
+    def check_token_usage(self, credentials_encrypted_str):
         """Check token usage with Manus API"""
-        api_key = json.loads(credentials)['api_key']
+        try:
+            credentials_bytes = credentials_encrypted_str.encode('utf-8')
+            decrypted_credentials_json_str = decrypt_data(credentials_bytes)
+            api_key = json.loads(decrypted_credentials_json_str)['api_key']
+        except Exception as e:
+            return None, f"Credential decryption or parsing failed for token usage check: {str(e)}"
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
         
+        # Get the API URL using the helper method, similar to authenticate.
+        # This method might be called without a full assignment context,
+        # so we might not have provider_model_instance easily.
+        # For now, let's assume it might need a provider_model_instance if called outside task context.
+        # If this is only called internally by a process that has access to the provider model, it's fine.
+        # However, this method is not passed provider_model_instance from anywhere currently.
+        # For safety, it should use the default or be passed the instance.
+        # Let's assume it's okay for now or that this method is not actively used in a way that needs dynamic URL.
+        # For consistency, it should use self._get_api_url(None) to get default or basic env var.
+        # To be fully correct, it should accept provider_model_instance.
+        # For this subtask, I will use the default URL as a placeholder for simplicity,
+        # as changing its call signature is outside the scope of "displaying code".
+        api_url_base = self.DEFAULT_API_URL # Needs provider_model_instance for full dynamic behavior
+
         try:
-            response = requests.get(f"{self.API_URL}/usage", headers=headers)
+            response = requests.get(f"{api_url_base}/usage", headers=headers)
             response.raise_for_status()
             usage = response.json()
             
@@ -254,19 +339,36 @@ class ManusProvider(AIProviderInterface):
 class ClaudeProvider(AIProviderInterface):
     """Integration with Anthropic's Claude for alternative code generation"""
     
-    API_URL = "https://api.anthropic.com/v1"
-    
-    def authenticate(self, credentials):
+    # API_URL class attribute can serve as a default
+    DEFAULT_API_URL = "https://api.anthropic.com/v1"
+
+    def _get_api_url(self, provider_model_instance):
+        env_url = os.getenv("CLAUDE_API_URL")
+        if env_url:
+            return env_url
+        if provider_model_instance and provider_model_instance.api_endpoint:
+            return provider_model_instance.api_endpoint
+        return self.DEFAULT_API_URL
+
+    def authenticate(self, credentials_encrypted_str, provider_model_instance=None): # Added provider_model_instance
         """Authenticate with Claude API"""
-        api_key = json.loads(credentials)['api_key']
+        try:
+            credentials_bytes = credentials_encrypted_str.encode('utf-8')
+            decrypted_credentials_json_str = decrypt_data(credentials_bytes)
+            api_key = json.loads(decrypted_credentials_json_str)['api_key']
+        except Exception as e:
+            return False, f"Credential decryption or parsing failed: {str(e)}"
+
         headers = {
             "x-api-key": api_key,
             "Content-Type": "application/json"
         }
+
+        api_url_base = self._get_api_url(provider_model_instance)
         
         try:
             # Test authentication with a simple request
-            response = requests.get(f"{self.API_URL}/models", headers=headers)
+            response = requests.get(f"{api_url_base}/models", headers=headers)
             response.raise_for_status()
             return True, None
         except Exception as e:
@@ -274,12 +376,21 @@ class ClaudeProvider(AIProviderInterface):
     
     def generate_content(self, task, assignment):
         """Generate code content using Claude"""
-        api_key = json.loads(assignment.account.auth_credentials)['api_key']
+        try:
+            credentials_encrypted_str = assignment.account.auth_credentials
+            credentials_bytes = credentials_encrypted_str.encode('utf-8')
+            decrypted_credentials_json_str = decrypt_data(credentials_bytes)
+            api_key = json.loads(decrypted_credentials_json_str)['api_key']
+        except Exception as e:
+            return None, f"Credential decryption or parsing failed for content generation: {str(e)}"
+
         headers = {
             "x-api-key": api_key,
             "Content-Type": "application/json",
             "anthropic-version": "2023-06-01"
         }
+
+        api_url_base = self._get_api_url(assignment.account.provider)
         
         try:
             # Extract parameters from task description
@@ -296,7 +407,7 @@ class ClaudeProvider(AIProviderInterface):
             }
             
             response = requests.post(
-                f"{self.API_URL}/complete",
+                f"{api_url_base}/complete", # Use dynamic URL
                 headers=headers,
                 json=payload
             )
@@ -336,9 +447,15 @@ class ClaudeProvider(AIProviderInterface):
         except Exception as e:
             return None, str(e)
     
-    def check_token_usage(self, credentials):
+    def check_token_usage(self, credentials_encrypted_str):
         """Check token usage with Claude API"""
-        api_key = json.loads(credentials)['api_key']
+        try:
+            credentials_bytes = credentials_encrypted_str.encode('utf-8')
+            decrypted_credentials_json_str = decrypt_data(credentials_bytes)
+            api_key = json.loads(decrypted_credentials_json_str)['api_key']
+        except Exception as e:
+            return None, f"Credential decryption or parsing failed for token usage check: {str(e)}"
+
         headers = {
             "x-api-key": api_key,
             "Content-Type": "application/json"

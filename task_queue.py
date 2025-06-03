@@ -2,11 +2,16 @@ import redis
 import json
 from datetime import datetime
 import uuid
-from src.models.task import Task, TaskAssignment
-from src.models.ai_provider import AIProvider, ProviderAccount
+from task import Task, TaskAssignment
+from ai_provider import AIProvider, ProviderAccount
+
+import os
 
 # Initialize Redis client
-redis_client = redis.Redis(host='localhost', port=6379, db=0)
+REDIS_HOST = os.getenv('REDIS_HOST', 'localhost')
+REDIS_PORT = int(os.getenv('REDIS_PORT', 6379))
+REDIS_DB = int(os.getenv('REDIS_DB', 0))
+redis_client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=REDIS_DB)
 
 class TaskQueue:
     """Task queue manager using Redis"""
